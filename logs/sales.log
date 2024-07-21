@@ -1,0 +1,12 @@
+2024-07-21 09:28:37,162 - INFO - Fetching sales data...
+2024-07-21 09:28:37,180 - DEBUG - Starting new HTTPS connection (1): api.amazon.com:443
+2024-07-21 09:28:37,699 - DEBUG - https://api.amazon.com:443 "POST /auth/o2/token HTTP/1.1" 200 806
+2024-07-21 09:28:37,701 - DEBUG - Access Token: Atza|IwEBIK3sq9X965ZSLP17_971GsI0wkjtwTyO_v-920bdDMaORDGuKOSRlC79ECkkcBjisZ8K7eAT4bwpFwg3jnQAU1VwcGodOezfOx2Rgo0aQgiKn_IVhv-hmTdftIH5PTsi1cpplmGbPaPPg6Ri8KhprXZ3HGALSKDCdd7eIWTbFteyaiJ6oeUSO-lOfJLo8HgAXFNPt3aCuTaVrzdgjHSpTEj_B-3eIERqn6CNI40xMRNEfnS0cit7lPapYyRwnwMDzX2Cc3DXm2yyw02_7tXiu4KifDwJ-4_y1MQSXhLAExmBrt6a5h-bzX5ei9AaikiAKw-9ZgOAtSyfaHOBUNbX89EsxsozPBMUumct9kNANTTxeQ
+2024-07-21 09:28:37,702 - DEBUG - Request Headers: {'x-amz-access-token': 'Atza|IwEBIK3sq9X965ZSLP17_971GsI0wkjtwTyO_v-920bdDMaORDGuKOSRlC79ECkkcBjisZ8K7eAT4bwpFwg3jnQAU1VwcGodOezfOx2Rgo0aQgiKn_IVhv-hmTdftIH5PTsi1cpplmGbPaPPg6Ri8KhprXZ3HGALSKDCdd7eIWTbFteyaiJ6oeUSO-lOfJLo8HgAXFNPt3aCuTaVrzdgjHSpTEj_B-3eIERqn6CNI40xMRNEfnS0cit7lPapYyRwnwMDzX2Cc3DXm2yyw02_7tXiu4KifDwJ-4_y1MQSXhLAExmBrt6a5h-bzX5ei9AaikiAKw-9ZgOAtSyfaHOBUNbX89EsxsozPBMUumct9kNANTTxeQ', 'x-amz-date': '20240721T082837Z', 'Content-Type': 'application/json'}
+2024-07-21 09:28:37,702 - DEBUG - Request Params: {'MarketplaceIds': '${MARKETPLACE_ID}', 'CreatedAfter': '2024-07-20T09:28:37.702087', 'OrderStatuses': 'Pending,PendingAvailability,Unshipped,PartiallyShipped,Shipped,InvoiceUnconfirmed'}
+2024-07-21 09:28:37,709 - DEBUG - Starting new HTTPS connection (1): sellingpartnerapi-eu.amazon.com:443
+2024-07-21 09:28:37,885 - DEBUG - https://sellingpartnerapi-eu.amazon.com:443 "GET /orders/v0/orders?MarketplaceIds=%24%7BMARKETPLACE_ID%7D&CreatedAfter=2024-07-20T09%3A28%3A37.702087&OrderStatuses=Pending%2CPendingAvailability%2CUnshipped%2CPartiallyShipped%2CShipped%2CInvoiceUnconfirmed HTTP/1.1" 400 126
+2024-07-21 09:28:37,886 - DEBUG - Response Status Code: 400
+2024-07-21 09:28:37,886 - DEBUG - Response Data: {'errors': [{'code': 'InvalidInput', 'message': '$errorResponse.Message', 'details': ''}]}
+2024-07-21 09:28:37,886 - WARNING - No sales data to process.
+2024-07-21 09:28:37,887 - ERROR - No sales data fetched. Aborting data processing.
