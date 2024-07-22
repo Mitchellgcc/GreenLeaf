@@ -1,0 +1,34 @@
+database:
+  host: 'inventory-management-db.cks3kavdknpr.us-east-2.rds.amazonaws.com'
+  user: 'admin'
+  password: 'Charlie123'
+  database: 'inventory_db'
+
+amazon_api:
+  access_key: ${ACCESS_KEY}
+  secret_key: ${SECRET_KEY}
+  seller_id: ${SELLER_ID}
+  marketplace_id: ${MARKETPLACE_ID}
+  client_id: ${CLIENT_ID}
+  client_secret: ${CLIENT_SECRET}
+  refresh_token: ${REFRESH_TOKEN}
+
+data_processing:
+  ema_span: 14
+  stl_period: 30
+  lead_time: 10
+  service_level: 0.95
+
+logging:
+  level: DEBUG
+  format: '%(asctime)s - %(levelname)s - %(message)s'
+  handlers:
+    - console
+    - file
+  file:
+    filename: '/Users/georgemitchell/Library/Mobile Documents/com~apple~CloudDocs/New Business/Plane Health/Amazon (Cornwells)/Software/logs/inventory.log'
+    maxBytes: 10485760  # 10MB
+    backupCount: 5
+
+webhook:
+  port: 5001

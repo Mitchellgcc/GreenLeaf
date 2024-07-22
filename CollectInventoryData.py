@@ -1,24 +1,33 @@
 import requests
 import logging
 import mysql.connector
-from datetime import datetime, timedelta
-from GetAccessToken import get_access_token
+from datetime import datetime
 import numpy as np
 import pandas as pd
-from statsmodels.tsa.seasonal import STL
-from scipy.stats import norm
 import yaml
 from flask import Flask, request, jsonify
 import os
 from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
+from GetAccessToken import get_access_token
 
 # Load environment variables from .env file
 load_dotenv()
+logging.info("Loaded environment variables from .env file")
+
+# Log the environment variables
+logging.info(f"ACCESS_KEY: {os.getenv('ACCESS_KEY')}")
+logging.info(f"SECRET_KEY: {os.getenv('SECRET_KEY')}")
+logging.info(f"SELLER_ID: {os.getenv('SELLER_ID')}")
+logging.info(f"MARKETPLACE_ID: {os.getenv('MARKETPLACE_ID')}")
+logging.info(f"CLIENT_ID: {os.getenv('CLIENT_ID')}")
+logging.info(f"CLIENT_SECRET: {os.getenv('CLIENT_SECRET')}")
+logging.info(f"REFRESH_TOKEN: {os.getenv('REFRESH_TOKEN')}")
 
 # Load configuration
 with open('config.yaml', 'r') as file:
     config = yaml.safe_load(file)
+logging.info("Loaded configuration from config.yaml")
 
 # Substitute environment variables
 config['amazon_api']['access_key'] = os.getenv('ACCESS_KEY')
@@ -28,6 +37,9 @@ config['amazon_api']['marketplace_id'] = os.getenv('MARKETPLACE_ID')
 config['amazon_api']['client_id'] = os.getenv('CLIENT_ID')
 config['amazon_api']['client_secret'] = os.getenv('CLIENT_SECRET')
 config['amazon_api']['refresh_token'] = os.getenv('REFRESH_TOKEN')
+
+# Verify configuration
+logging.info(f"Final configuration: {config['amazon_api']}")
 
 # Ensure log directory exists
 log_file_path = os.path.expanduser('~/PlaneHealth/logs/inventory.log')
@@ -64,16 +76,14 @@ db = mysql.connector.connect(
 cursor = db.cursor()
 
 def clean_and_validate_data(data):
-    df = pd.DataFrame(data, columns=['product_id', 'order_id', 'sale_date', 'sales_quantity', 'sales_price', 'warehouse_location', 'batch_number', 'expiration_date'])
+    df = pd.DataFrame(data, columns=['product_id', 'warehouse_location', 'current_stock', 'batch_number', 'expiration_date'])
 
     # Ensure columns are numeric
-    df['sales_quantity'] = pd.to_numeric(df['sales_quantity'], errors='coerce')
-    df['sales_price'] = pd.to_numeric(df['sales_price'], errors='coerce')
+    df['current_stock'] = pd.to_numeric(df['current_stock'], errors='coerce')
 
     # Handle missing values explicitly
     df = df.assign(
-        sales_quantity=df['sales_quantity'].fillna(0),
-        sales_price=df['sales_price'].fillna(0),
+        current_stock=df['current_stock'].fillna(0),
         warehouse_location=df['warehouse_location'].fillna('N/A'),
         batch_number=df['batch_number'].fillna('N/A'),
         expiration_date=df['expiration_date'].fillna(pd.NaT)
@@ -86,16 +96,14 @@ def clean_and_validate_data(data):
     logging.debug(f"Data after cleaning and forward fill:\n{df}")
 
     # Convert data types to appropriate formats
-    df['sales_quantity'] = df['sales_quantity'].astype(int)
-    df['sales_price'] = df['sales_price'].astype(float)
-    df['sale_date'] = pd.to_datetime(df['sale_date'])
+    df['current_stock'] = df['current_stock'].astype(int)
     df['expiration_date'] = pd.to_datetime(df['expiration_date'], errors='coerce')
 
     # Summary statistics before outlier removal
     logging.debug(f"Summary statistics before outlier removal:\n{df.describe()}")
 
     # Additional outlier detection using IQR method (higher threshold)
-    for column in ['sales_quantity', 'sales_price']:
+    for column in ['current_stock']:
         Q1 = df[column].quantile(0.25)
         Q3 = df[column].quantile(0.75)
         IQR = Q3 - Q1
@@ -108,103 +116,6 @@ def clean_and_validate_data(data):
 
     return df
 
-def calculate_ema(df, span):
-    """Calculate the Exponential Moving Average for sales quantities."""
-    df['ema_sales_quantity'] = df['sales_quantity'].ewm(span=span, adjust=False).mean()
-    logging.debug(f"Data with EMA:\n{df}")
-    return df
-
-def apply_stl_decomposition(df, period):
-    """Apply Seasonal Decomposition of Time Series (STL) to adjust for seasonality."""
-    stl = STL(df['sales_quantity'], period=period)
-    result = stl.fit()
-    df['seasonal'] = result.seasonal
-    df['trend'] = result.trend
-    df['residual'] = result.resid
-    logging.debug(f"Data after STL Decomposition:\n{df}")
-    return df
-
-def calculate_safety_stock(daily_demand, lead_time, service_level=0.95):
-    """Calculate safety stock based on demand variability and service level."""
-    demand_std_dev = np.std(daily_demand)
-    z_score = norm.ppf(service_level)
-    safety_stock = z_score * demand_std_dev * np.sqrt(lead_time)
-    return safety_stock
-
-def calculate_reorder_point(df, lead_time, safety_stock):
-    """Calculate reorder point based on sales velocity, lead time, and safety stock."""
-    df['reorder_point'] = (df['ema_sales_quantity'] * lead_time) + safety_stock
-    logging.debug(f"Data with Reorder Points:\n{df}")
-    return df
-
-def fetch_order_items(order_id, headers):
-    endpoint = f"https://sellingpartnerapi-eu.amazon.com/orders/v0/orders/{order_id}/orderItems"
-    response = requests.get(endpoint, headers=headers)
-    if response.status_code == 200:
-        data = response.json()
-        logging.debug(f"Order Items for {order_id}: {data}")
-        return data.get('payload', {}).get('OrderItems', [])
-    else:
-        logging.error(f"Failed to fetch order items for {order_id}. Status code: {response.status_code}")
-        return []
-
-def fetch_sales_data():
-    logging.info("Fetching sales data...")
-    access_token = get_access_token()
-    logging.debug(f"Access Token: {access_token}")
-    
-    headers = {
-        'x-amz-access-token': access_token,
-        'x-amz-date': datetime.utcnow().strftime('%Y%m%dT%H%M%SZ'),
-        'Content-Type': 'application/json',
-    }
-    endpoint = "https://sellingpartnerapi-eu.amazon.com/orders/v0/orders"
-    params = {
-        'MarketplaceIds': config['amazon_api']['marketplace_id'],
-        'CreatedAfter': (datetime.now() - timedelta(days=1)).isoformat(),
-        'OrderStatuses': 'Pending,PendingAvailability,Unshipped,PartiallyShipped,Shipped,InvoiceUnconfirmed'
-    }
-    
-    logging.debug(f"Request Headers: {headers}")
-    logging.debug(f"Request Params: {params}")
-
-    response = requests.get(endpoint, headers=headers, params=params)
-    data = response.json()
-    
-    logging.debug(f"Response Status Code: {response.status_code}")
-    logging.debug(f"Response Data: {data}")
-
-    sales_data = []
-    if 'payload' in data and 'Orders' in data['payload']:
-        for order in data['payload']['Orders']:
-            logging.debug(f"Order Keys: {order.keys()}")
-            order_id = order['AmazonOrderId']
-            sale_date = order['PurchaseDate']
-            sale_date = datetime.strptime(sale_date, "%Y-%m-%dT%H:%M:%SZ").date()
-            
-            order_items = fetch_order_items(order_id, headers)
-            for item in order_items:
-                logging.debug(f"Processing item: {item}")
-                product_id = item['ASIN']
-                sales_quantity = item['QuantityOrdered']
-                sales_price = item.get('ItemPrice', {}).get('Amount')
-                
-                # Fetch additional fields: warehouse_location, batch_number, expiration_date
-                warehouse_location = item.get('WarehouseLocation', 'N/A')
-                batch_number = item.get('BatchNumber', 'N/A')
-                expiration_date = item.get('ExpirationDate')
-
-                if sales_price is not None:
-                    sales_data.append((product_id, order_id, sale_date, sales_quantity, sales_price, warehouse_location, batch_number, expiration_date))
-                else:
-                    logging.warning(f"Missing 'ItemPrice' for item: {item}")
-
-    if not sales_data:
-        logging.warning("No sales data to process.")
-        return []
-
-    return sales_data
-
 def fetch_inventory_data():
     logging.info("Fetching inventory data...")
     access_token = get_access_token()
@@ -215,11 +126,20 @@ def fetch_inventory_data():
     }
     endpoint = "https://sellingpartnerapi-eu.amazon.com/fba/inventory/v1/summaries"
     params = {
-        'MarketplaceIds': config['amazon_api']['marketplace_id'],
+        'details': 'true',
+        'granularityType': 'Marketplace',
+        'granularityId': config['amazon_api']['marketplace_id'],
+        'marketplaceIds': config['amazon_api']['marketplace_id'],
     }
+    
+    logging.debug(f"Request URL: {endpoint}")
+    logging.debug(f"Request Headers: {headers}")
+    logging.debug(f"Request Params: {params}")
+    
     response = requests.get(endpoint, headers=headers, params=params)
     logging.debug(f"Inventory Data Fetch Response Status Code: {response.status_code}")
     logging.debug(f"Inventory Data Fetch Response: {response.text}")
+    
     if response.status_code == 200:
         data = response.json()
         inventory_data = []
@@ -232,6 +152,10 @@ def fetch_inventory_data():
         return inventory_data
     else:
         logging.error(f"Failed to fetch inventory data. Status code: {response.status_code}")
+        error_data = response.json()
+        if 'errors' in error_data:
+            for error in error_data['errors']:
+                logging.error(f"Error Code: {error['code']}, Message: {error['message']}, Details: {error['details']}")
         return []
 
 def store_inventory_data(data):
@@ -257,12 +181,12 @@ def check_data_integrity(data):
     
     integrity_issues = []
     for item in data:
-        if item[3] is None or item[4] is None:  # Index 3: sales_quantity, Index 4: sales_price
+        if item[2] is None:  # Index 2: current_stock
             integrity_issues.append(item)
     
     if integrity_issues:
         logging.error(f"Integrity issues found in data: {integrity_issues}")
-        send_alert("Data integrity issue detected in sales data")
+        send_alert("Data integrity issue detected in inventory data")
         return False
     
     logging.info("Data integrity check passed.")
@@ -273,49 +197,17 @@ def send_alert(message):
     # Implement alerting logic, e.g., send an email or a Slack message
     pass
 
-# Fetch sales and inventory data and perform integrity check
-sales_data = fetch_sales_data()
+# Fetch inventory data and perform integrity check
 inventory_data = fetch_inventory_data()
 
-if sales_data:
-    if check_data_integrity(sales_data):
-        logging.info("Proceeding with sales data processing...")
-        cleaned_data = clean_and_validate_data(sales_data)
-        ema_data = calculate_ema(cleaned_data, span=config['data_processing']['ema_span'])  # Use config value
-        stl_data = apply_stl_decomposition(ema_data, period=config['data_processing']['stl_period'])  # Use config value
-        daily_demand = stl_data['residual']
-        safety_stock = calculate_safety_stock(daily_demand, lead_time=config['data_processing']['lead_time'], service_level=config['data_processing']['service_level'])  # Use config values
-        final_data = calculate_reorder_point(stl_data, lead_time=config['data_processing']['lead_time'], safety_stock=safety_stock)  # Use config values
-        logging.info("Sales data processing complete.")
-        # Save final_data to database or use it for further analysis
-
-        # Convert DataFrame to list of tuples
-        records = [tuple(x) for x in final_data.values]
-        cursor.executemany("""
-            INSERT INTO inventory_data (product_id, order_id, sale_date, sales_quantity, sales_price, warehouse_location, batch_number, expiration_date, ema_sales_quantity, seasonal, trend, residual, reorder_point)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE 
-                sale_date = VALUES(sale_date),
-                sales_quantity = VALUES(sales_quantity),
-                sales_price = VALUES(sales_price),
-                warehouse_location = VALUES(warehouse_location),
-                batch_number = VALUES(batch_number),
-                expiration_date = VALUES(expiration_date),
-                ema_sales_quantity = VALUES(ema_sales_quantity),
-                seasonal = VALUES(seasonal),
-                trend = VALUES(trend),
-                residual = VALUES(residual),
-                reorder_point = VALUES(reorder_point)
-        """, records)
-        db.commit()
-        logging.info("Inventory data updated successfully.")
-    else:
-        logging.error("Data integrity check failed. Aborting sales data processing.")
-else:
-    logging.error("No sales data fetched. Aborting sales data processing.")
-
 if inventory_data:
-    store_inventory_data(inventory_data)
+    if check_data_integrity(inventory_data):
+        logging.info("Proceeding with inventory data processing...")
+        cleaned_data = clean_and_validate_data(inventory_data)
+        store_inventory_data(cleaned_data)
+        logging.info("Inventory data processing complete.")
+    else:
+        logging.error("Data integrity check failed. Aborting inventory data processing.")
 else:
     logging.error("No inventory data fetched. Aborting inventory data processing.")
 
@@ -329,35 +221,10 @@ def webhook():
         data = request.json
         if data:
             logging.debug(f"Webhook data: {data}")
-            # Assume the webhook sends sales data in the required format
+            # Assume the webhook sends inventory data in the required format
             cleaned_data = clean_and_validate_data(data)
-            ema_data = calculate_ema(cleaned_data, span=config['data_processing']['ema_span'])
-            stl_data = apply_stl_decomposition(ema_data, period=config['data_processing']['stl_period'])
-            daily_demand = stl_data['residual']
-            safety_stock = calculate_safety_stock(daily_demand, lead_time=config['data_processing']['lead_time'], service_level=config['data_processing']['service_level'])
-            final_data = calculate_reorder_point(stl_data, lead_time=config['data_processing']['lead_time'], safety_stock=safety_stock)
+            store_inventory_data(cleaned_data)
             logging.info("Webhook data processing complete.")
-
-            # Save final_data to database
-            records = [tuple(x) for x in final_data.values]
-            cursor.executemany("""
-                INSERT INTO inventory_data (product_id, order_id, sale_date, sales_quantity, sales_price, warehouse_location, batch_number, expiration_date, ema_sales_quantity, seasonal, trend, residual, reorder_point)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE 
-                    sale_date = VALUES(sale_date),
-                    sales_quantity = VALUES(sales_quantity),
-                    sales_price = VALUES(sales_price),
-                    warehouse_location = VALUES(warehouse_location),
-                    batch_number = VALUES(batch_number),
-                    expiration_date = VALUES(expiration_date),
-                    ema_sales_quantity = VALUES(ema_sales_quantity),
-                    seasonal = VALUES(seasonal),
-                    trend = VALUES(trend),
-                    residual = VALUES(residual),
-                    reorder_point = VALUES(reorder_point)
-            """, records)
-            db.commit()
-            logging.info("Webhook inventory data updated successfully.")
             return jsonify({'status': 'success'}), 200
         else:
             logging.warning("Empty data received from webhook.")
