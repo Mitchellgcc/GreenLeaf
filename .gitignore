@@ -4,3 +4,4 @@ config.yaml
 .env
 config.py
 config.yaml
+backups/.env.bak
