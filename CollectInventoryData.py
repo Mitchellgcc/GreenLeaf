@@ -1,7 +1,7 @@
 import requests
 import logging
 import mysql.connector
-from datetime import datetime
+from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 import yaml
@@ -121,7 +121,7 @@ def fetch_inventory_data():
     access_token = get_access_token()
     headers = {
         'x-amz-access-token': access_token,
-        'x-amz-date': datetime.utcnow().strftime('%Y%m%dT%H%M%SZ'),
+        'x-amz-date': datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ'),
         'Content-Type': 'application/json',
     }
     endpoint = "https://sellingpartnerapi-eu.amazon.com/fba/inventory/v1/summaries"
@@ -142,6 +142,7 @@ def fetch_inventory_data():
     
     if response.status_code == 200:
         data = response.json()
+        logging.debug(f"Response JSON: {data}")
         inventory_data = []
         if 'payload' in data and 'InventorySummaries' in data['payload']:
             for item in data['payload']['InventorySummaries']:
@@ -149,6 +150,8 @@ def fetch_inventory_data():
                 warehouse_location = item['fulfillmentCenterId']
                 available_quantity = item['totalSupplyQuantity']['quantity']
                 inventory_data.append((product_id, warehouse_location, available_quantity))
+        else:
+            logging.warning("No InventorySummaries found in the response payload.")
         return inventory_data
     else:
         logging.error(f"Failed to fetch inventory data. Status code: {response.status_code}")
@@ -157,6 +160,7 @@ def fetch_inventory_data():
             for error in error_data['errors']:
                 logging.error(f"Error Code: {error['code']}, Message: {error['message']}, Details: {error['details']}")
         return []
+
 
 def store_inventory_data(data):
     if not data:
